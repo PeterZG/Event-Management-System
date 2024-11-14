@@ -32,7 +32,7 @@ git clone [repository-link]
 2. Navigate to the project directory and build:
 
 ```bash
-cd assignment-iii-main
+cd [your directory path]
 gradle build
 ```
 
