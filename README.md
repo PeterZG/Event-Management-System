@@ -26,7 +26,7 @@ This project is an Event Management System that simulates the producer-consumer 
 1. Clone the repository:
 
 ```bash
-git clone [your-repository-link]
+git clone [repository-link]
 ```
 
 2. Navigate to the project directory and build:
