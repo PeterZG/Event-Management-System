@@ -50,10 +50,10 @@ gradle run
 
 ## File Structure
 
-- **app/**: Core application logic
-- **config/**: Configuration files and settings
-- **design/**: Includes class diagram designs and related documents
-- **blog/**: Development process records and blogs
+- **app**: Core application logic
+- **config**: Configuration files and settings
+- **design**: Includes class diagram designs and related documents
+- **blog**: Development process records and blogs
 - **README.md**: Project documentation
 
 ## Contact
