@@ -60,7 +60,7 @@ gradle run
 
 For any inquiries, please contact:
 
-- Weihou Zeng: z5270202@ad.unsw.edu.au
+- Weihou Zeng: weihouzeng@gmail.com Or 849997616@qq.com
 
 ## Authors
 
