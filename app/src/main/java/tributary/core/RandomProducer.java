@@ -1,6 +1,6 @@
 package tributary.core;
 
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -10,7 +10,7 @@ import tributary.api.Producer;
 import tributary.api.Topic;
 
 public class RandomProducer<T> extends Producer<T> {
-    private Random random;
+    private final Random random;
 
     public RandomProducer(String id) {
         super(id);
@@ -25,12 +25,12 @@ public class RandomProducer<T> extends Producer<T> {
 
     @Override
     public String allocate(Event<T> event, Topic<T> topic) {
-        List<Partition<T>> partitiions = new LinkedList<>(topic.getPartitions().values());
-        if (partitiions.isEmpty()) {
+        List<Partition<T>> availablePartitions = new ArrayList<>(topic.getPartitions().values());
+        if (availablePartitions.isEmpty()) {
             throw new IllegalArgumentException("Topic does not have partitions.");
         }
-        int index = random.nextInt(partitiions.size());
-        Partition<T> partition = partitiions.get(index);
+        int index = random.nextInt(availablePartitions.size());
+        Partition<T> partition = availablePartitions.get(index);
         partition.pushEvent(event);
         return partition.getId();
     }

@@ -1,7 +1,8 @@
 package tributary.api;
 
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * The Consumer class represents an entity in the event-driven system that is
@@ -26,7 +27,7 @@ public abstract class Consumer<T> implements InfoItem {
      */
     protected Consumer(String id) {
         this.id = id;
-        partitions = new LinkedList<>();
+        partitions = new ArrayList<>();
     }
 
     /**
@@ -51,8 +52,16 @@ public abstract class Consumer<T> implements InfoItem {
      *
      * @return A list of partitions.
      */
+    public synchronized List<Partition<T>> getPartitions() {
+        return List.copyOf(partitions);
+    }
+
+    /**
+     * @deprecated Use {@link #getPartitions()}.
+     */
+    @Deprecated
     public List<Partition<T>> getPartitiions() {
-        return partitions;
+        return getPartitions();
     }
 
     /**
@@ -60,8 +69,8 @@ public abstract class Consumer<T> implements InfoItem {
      *
      * @param partitions A list of partitions.
      */
-    public void setPartitions(List<Partition<T>> partitions) {
-        this.partitions = partitions;
+    public synchronized void setPartitions(List<Partition<T>> partitions) {
+        this.partitions = new ArrayList<>(Objects.requireNonNull(partitions, "partitions"));
     }
 
     /**
@@ -69,8 +78,8 @@ public abstract class Consumer<T> implements InfoItem {
      *
      * @param partition The partition to be added.
      */
-    public void addPartition(Partition<T> partition) {
-        partitions.add(partition);
+    public synchronized void addPartition(Partition<T> partition) {
+        partitions.add(Objects.requireNonNull(partition, "partition"));
     }
 
     /**
@@ -80,7 +89,7 @@ public abstract class Consumer<T> implements InfoItem {
      * @param indent The level of indentation to use for formatting the output.
      * @return A string with the consumer's information, formatted with indentation.
      */
-    public String getInfo(int indent) {
+    public synchronized String getInfo(int indent) {
         String pre = " ".repeat(indent * INDENT);
         StringBuilder sb = new StringBuilder();
         sb.append(pre).append("Consumer id: ").append(id).append("\n");

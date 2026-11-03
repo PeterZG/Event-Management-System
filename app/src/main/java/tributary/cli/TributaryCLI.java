@@ -17,11 +17,17 @@ public class TributaryCLI {
     }
 
     private void start() {
-        System.out.println("==========  Tributry System  ==========");
+        System.out.println("==========  Tributary System  ==========");
         System.out.println("Enter h/help for help.");
         while (true) {
-            System.out.println("\nEnter your commnd:");
+            System.out.println("\nEnter your command:");
+            if (!scanner.hasNextLine()) {
+                return;
+            }
             String line = scanner.nextLine().trim();
+            if (line.isEmpty()) {
+                continue;
+            }
 
             try {
                 if (line.equals("exit")) {
@@ -62,11 +68,10 @@ public class TributaryCLI {
                         System.out.println("Invalid command.");
                 }
             } catch (IllegalArgumentException e) {
-                System.err.println("Invlid commnd: " + line);
+                System.err.println("Invalid command: " + line);
                 System.err.println(e.getMessage() == null ? "" : e.getMessage());
             } catch (Exception e) {
-                e.printStackTrace();
-                System.err.println("Invlid commnd: " + line);
+                System.err.println("Command failed: " + e.getMessage());
             }
         }
     }
@@ -85,26 +90,38 @@ public class TributaryCLI {
 
     private void printHelp() {
         String[] helps = new String[] {
-                "help: print this help menu.",
-                "exit: Exit the Tributry System.",
+                "help: show commands.  exit: close the simulator.",
+                "Replace <...> with your own values; omit the angle brackets.",
                 "",
-                "Other commands:",
+                "Set up a message flow",
                 "create topic <id> <type>",
                 "create partition <topic> <id>",
                 "create consumer group <id> <topic> <rebalancing>",
-                "create consumer group <id> <topic> <rebalancing>",
-                "delete consumer <consumer>",
+                "create consumer <group> <id>",
                 "create producer <id> <type> <allocation>",
-                "delete producer <producer>",
+                "",
+                "Send and receive",
                 "produce event <producer> <topic> <event> <partition>",
                 "consume event <consumer> <partition>",
                 "consume events <consumer> <partition> <number of events>",
-                "show topic <topic>",
-                "show consumer group <group>",
                 "parallel produce (<producer>, <topic>, <event>), ...",
                 "parallel consume (<consumer>, <partition>)",
+                "",
+                "Inspect and configure",
+                "show topic <topic>",
+                "show consumer group <group>",
+                "show consumer <id>",
+                "show producer <id>",
                 "set consumer group rebalancing <group> <rebalancing>",
+                "set producer allocation <producer> <manual|random>",
                 "playback <consumer> <partition> <offset>",
+                "",
+                "Remove resources",
+                "delete consumer <consumer>",
+                "delete consumer group <group>",
+                "delete producer <producer>",
+                "delete topic <id> (also removes its consumer groups)",
+                "delete partition <topic> <id> (discards its queued events)",
                 ""
         };
         for (String help : helps) {
@@ -147,17 +164,33 @@ public class TributaryCLI {
     private void deleteCommands(String[] strs) {
         switch (strs[1]) {
             case "consumer":
-                system.deleteConsumer(strs[2]);
+                if ("group".equals(strs[2])) {
+                    checkArgCount(strs, 4);
+                    system.deleteConsumerGroup(strs[3]);
+                } else {
+                    system.deleteConsumer(strs[2]);
+                }
                 break;
             case "producer":
                 system.deleteProducer(strs[2]);
                 break;
+            case "topic":
+                system.deleteTopic(strs[2]);
+                break;
+            case "partition":
+                checkArgCount(strs, 4);
+                system.deletePartition(strs[2], strs[3]);
+                break;
             default:
+                throw new IllegalArgumentException("Unknown entity type: " + strs[1]);
         }
     }
 
     private void produceCommands(String[] strs) {
         checkArgCount(strs, 5);
+        if (!"event".equals(strs[1])) {
+            throw new IllegalArgumentException("Use produce event");
+        }
         String partitionId = strs.length > 5 ? strs[5] : null;
         system.produceEvent(strs[2], strs[3], strs[4], partitionId);
     }
@@ -173,6 +206,7 @@ public class TributaryCLI {
                 system.consumeEvents(strs[2], strs[3], Integer.parseInt(strs[4]));
                 break;
             default:
+                throw new IllegalArgumentException("Use consume event or consume events");
         }
     }
 
@@ -182,10 +216,18 @@ public class TributaryCLI {
                 system.showTopic(strs[2]);
                 break;
             case "consumer":
-                checkArgCount(strs, 4);
-                system.showConsumerGroup(strs[3]);
+                if ("group".equals(strs[2])) {
+                    checkArgCount(strs, 4);
+                    system.showConsumerGroup(strs[3]);
+                } else {
+                    system.showConsumer(strs[2]);
+                }
+                break;
+            case "producer":
+                system.showProducer(strs[2]);
                 break;
             default:
+                throw new IllegalArgumentException("Unknown entity type: " + strs[1]);
         }
     }
 
@@ -198,10 +240,16 @@ public class TributaryCLI {
                 system.parallelConsume(line);
                 break;
             default:
+                throw new IllegalArgumentException("Use parallel produce or parallel consume");
         }
     }
 
     private void setCommands(String[] strs) {
+        if (strs[1].equals("producer") && strs[2].equals("allocation")) {
+            checkArgCount(strs, 5);
+            system.setProducerAllocation(strs[3], strs[4]);
+            return;
+        }
         checkArgCount(strs, 6);
         if (!strs[1].equals("consumer")
                 || !strs[2].equals("group")

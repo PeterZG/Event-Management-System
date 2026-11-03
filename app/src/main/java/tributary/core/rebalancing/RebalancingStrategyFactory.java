@@ -1,4 +1,4 @@
-package tributary.core.reblancing;
+package tributary.core.rebalancing;
 
 public class RebalancingStrategyFactory {
     public RebalancingStrategy create(String type) {

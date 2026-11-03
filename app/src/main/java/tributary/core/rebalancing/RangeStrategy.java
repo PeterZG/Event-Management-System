@@ -1,4 +1,4 @@
-package tributary.core.reblancing;
+package tributary.core.rebalancing;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -15,6 +15,7 @@ public class RangeStrategy implements RebalancingStrategy {
         Map<String, Partition<T>> partitions = topic.getPartitions();
         int partitionNum = partitions.size();
         int consumerNum = consumers.size();
+        consumers.values().forEach(consumer -> consumer.setPartitions(List.of()));
         if (partitionNum == 0 || consumerNum == 0) {
             return;
         }

@@ -1,5 +1,6 @@
 package tributary.cli;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -8,15 +9,14 @@ import tributary.api.Consumer;
 import tributary.api.ConsumerGroup;
 import tributary.api.Partition;
 import tributary.api.Producer;
-import tributary.api.ProducerFactory;
 import tributary.api.Topic;
 
 public class Cluster {
 
-    private Map<String, Topic> topicMap = new HashMap<>();
-    private Map<String, Producer> producerMap = new HashMap<>();
-    private Map<String, ConsumerGroup> consumerGroupMap = new HashMap<>();
-    private ProducerFactory factory = new ProducerFactory();
+    private final Map<String, Topic> topicMap = new HashMap<>();
+    private final Map<String, Producer> producerMap = new HashMap<>();
+    private final Map<String, ConsumerGroup> consumerGroupMap = new HashMap<>();
+    private final Map<String, String> groupTopics = new HashMap<>();
 
     public void addTopic(Topic topic) {
         topicMap.put(topic.getId(), topic);
@@ -27,10 +27,21 @@ public class Cluster {
     }
 
     public Topic removeTopic(String id) {
+        if (!topicMap.containsKey(id)) {
+            return null;
+        }
+        for (String groupId : new ArrayList<>(groupTopics.keySet())) {
+            if (id.equals(groupTopics.get(groupId))) {
+                removeConsumerGroup(groupId);
+            }
+        }
         return topicMap.remove(id);
     }
 
     public void createPartition(String topicId, String partitionId) {
+        if (topicMap.values().stream().anyMatch(topic -> topic.getPartition(partitionId) != null)) {
+            throw new IllegalArgumentException("Partition ID already exists in the cluster: " + partitionId);
+        }
         Topic topic = getTopic(topicId);
         if (topic == null) {
             throw new IllegalArgumentException("Topic does not exist. id: " + topicId);
@@ -51,15 +62,28 @@ public class Cluster {
     }
 
     public ConsumerGroup createConsumerGroup(String topicId, String groupId, String rebalancing) {
+        if (consumerGroupMap.containsKey(groupId)) {
+            throw new IllegalArgumentException("Consumer group already exists: " + groupId);
+        }
         Topic topic = checkTopic(topicId);
         ConsumerGroup group = topic.createConsumerGroup(groupId, rebalancing);
-        group.setTopic(topic);
         consumerGroupMap.put(groupId, group);
+        groupTopics.put(groupId, topicId);
         return group;
     }
 
     public ConsumerGroup getConsumerGroup(String id) {
         return consumerGroupMap.get(id);
+    }
+
+    public boolean removeConsumerGroup(String id) {
+        String topicId = groupTopics.remove(id);
+        if (topicId == null) {
+            return false;
+        }
+        checkTopic(topicId).removeConsumerGroup(id);
+        consumerGroupMap.remove(id);
+        return true;
     }
 
     public void addConsumer(String groupId, Consumer consumer) {

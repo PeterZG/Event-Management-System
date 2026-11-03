@@ -1,4 +1,4 @@
-package tributary.core.reblancing;
+package tributary.core.rebalancing;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -13,6 +13,7 @@ public class RoundRobinStrategy implements RebalancingStrategy {
     @Override
     public <T> void rebalancing(Topic<T> topic, Map<String, Consumer<T>> consumers) {
         Map<String, Partition<T>> partitions = topic.getPartitions();
+        consumers.values().forEach(consumer -> consumer.setPartitions(List.of()));
         if (partitions.isEmpty() || consumers.isEmpty()) {
             return;
         }

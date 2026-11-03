@@ -2,8 +2,17 @@ package tributary.cli;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -20,7 +29,9 @@ import tributary.api.ProducerFactory;
 import tributary.api.Topic;
 
 public class TributarySystem {
-    private Cluster cluster;
+    private final Cluster cluster;
+    private final Map<String, String> topicTypes = new HashMap<>();
+    private final Map<String, String> producerTypes = new HashMap<>();
 
     private static TributarySystem instance;
 
@@ -28,7 +39,7 @@ public class TributarySystem {
         cluster = new Cluster();
     }
 
-    public static TributarySystem getInstance() {
+    public static synchronized TributarySystem getInstance() {
         if (instance == null) {
             instance = new TributarySystem();
         }
@@ -60,6 +71,7 @@ public class TributarySystem {
             cluster.addTopic(new Topic<Integer>(id));
         }
         System.out.println("Topic '" + id + "' for type '" + type + "' created.");
+        topicTypes.put(id, type);
     }
 
     public void createPartition(String topicId, String partitionId) {
@@ -78,7 +90,7 @@ public class TributarySystem {
         if (group == null) {
             throw new IllegalArgumentException("Consumer group does not exist. id: " + groupId);
         }
-        if (group.getConsumer(consumerId) != null) {
+        if (cluster.getGroupOfConsumer(consumerId) != null) {
             throw new IllegalArgumentException("Consumer exists. id: " + consumerId);
         }
         Constructor<BasicConsumer> c;
@@ -86,8 +98,8 @@ public class TributarySystem {
             c = BasicConsumer.class.getConstructor(String.class);
             group.createConsumer(consumerId, c);
             System.out.println("Consumer created. id: " + consumerId);
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalArgumentException("Unable to create consumer " + consumerId, e);
         }
     }
 
@@ -116,6 +128,7 @@ public class TributarySystem {
             cluster.addProducer(factory.create(id, allocation));
         }
         System.out.println("Producer created. id: " + id);
+        producerTypes.put(id, type);
     }
 
     public void deleteProducer(String id) {
@@ -124,12 +137,54 @@ public class TributarySystem {
             throw new IllegalArgumentException("Producer does not exist. id: " + id);
         } else {
             System.out.println("Producer removed. id: " + id);
+            producerTypes.remove(id);
         }
+    }
+
+    public void deleteTopic(String id) {
+        if (cluster.removeTopic(id) == null) {
+            throw new IllegalArgumentException("Topic does not exist. id: " + id);
+        }
+        topicTypes.remove(id);
+        System.out.println("Topic and its consumer groups removed. id: " + id);
+    }
+
+    public void deleteConsumerGroup(String id) {
+        if (!cluster.removeConsumerGroup(id)) {
+            throw new IllegalArgumentException("Consumer group does not exist. id: " + id);
+        }
+        System.out.println("Consumer group removed. id: " + id);
+    }
+
+    public void deletePartition(String topicId, String partitionId) {
+        if (!cluster.checkTopic(topicId).removePartition(partitionId)) {
+            throw new IllegalArgumentException("Partition does not exist. id: " + partitionId);
+        }
+        System.out.println("Partition removed and consumer groups rebalanced. id: " + partitionId);
+    }
+
+    public void setProducerAllocation(String id, String allocation) {
+        cluster.checkProducer(id);
+        cluster.addProducer(new ProducerFactory<>().create(id, allocation));
+        System.out.println("Producer allocation changed. id: " + id + ", allocation: " + allocation);
+    }
+
+    public void showProducer(String id) {
+        Producer producer = cluster.checkProducer(id);
+        System.out.println("Producer id: " + producer.getId() + ", type: " + producerTypes.get(id)
+                + ", allocation: " + producer.getClass().getSimpleName());
+    }
+
+    public void showConsumer(String id) {
+        System.out.println(cluster.checkConsumer(id).getInfo(0));
     }
 
     public void produceEvent(String producerId, String topicId, String eventFile, String partitionId) {
         Producer producer = cluster.checkProducer(producerId);
         Topic topic = cluster.checkTopic(topicId);
+        if (!producerTypes.get(producerId).equalsIgnoreCase(topicTypes.get(topicId))) {
+            throw new IllegalArgumentException("Producer and topic payload types must match");
+        }
         checkFileExists(eventFile);
         if (partitionId != null && topic.getPartition(partitionId) == null) {
             throw new IllegalArgumentException("Partition does not exist. id: " + partitionId);
@@ -139,12 +194,12 @@ public class TributarySystem {
         String eventId = null;
         Object value = null;
         try {
-            eventJson = new JSONObject(new String(Files.readAllBytes(Paths.get(eventFile))));
+            eventJson = new JSONObject(Files.readString(Paths.get(eventFile), StandardCharsets.UTF_8));
             eventId = eventJson.getString("id");
-            value = eventJson.getString("value");
+            value = "Integer".equalsIgnoreCase(producerTypes.get(producerId))
+                    ? integerPayload(eventJson.get("value")) : eventJson.getString("value");
         } catch (Exception e) {
-            e.printStackTrace();
-            throw new IllegalArgumentException("Error parse json data.");
+            throw new IllegalArgumentException("Unable to read event JSON: " + e.getMessage(), e);
         }
 
         Event event = producer.produce(eventId, partitionId, value);
@@ -153,11 +208,24 @@ public class TributarySystem {
         System.out.println("Event (id " + event.getId() + ") allocated to partition (id: " + allocated + ")");
     }
 
+    private int integerPayload(Object value) {
+        if (value instanceof Number) {
+            try {
+                // JSONObject.getInt truncates fractions and wraps oversized values.
+                return new BigDecimal(value.toString()).intValueExact();
+            } catch (ArithmeticException | NumberFormatException exception) {
+                throw new IllegalArgumentException("Integer payload must be a whole 32-bit JSON number", exception);
+            }
+        }
+        throw new IllegalArgumentException("Integer payload must be a whole 32-bit JSON number");
+    }
+
     public void consumeEvent(String consumerId, String partitionId) {
         Consumer consumer = cluster.checkConsumer(consumerId);
         Partition partition = cluster.checkPartition(partitionId);
-        if (partition.size() > 0) {
-            Event event = partition.popEvent();
+        checkAssignment(consumer, partition);
+        Event event = partition.popEvent();
+        if (event != null) {
             consumer.consume(event);
         } else {
             throw new IllegalArgumentException("Partition is empty. id: " + partitionId);
@@ -167,11 +235,23 @@ public class TributarySystem {
     public void consumeEvents(String consumerId, String partitionId, int number) {
         Consumer consumer = cluster.checkConsumer(consumerId);
         Partition partition = cluster.checkPartition(partitionId);
-        while (number > 0 && partition.size() > 0) {
-
+        checkAssignment(consumer, partition);
+        if (number < 0) {
+            throw new IllegalArgumentException("Number of events must not be negative");
+        }
+        while (number > 0) {
             Event event = partition.popEvent();
+            if (event == null) {
+                break;
+            }
             consumer.consume(event);
             number--;
+        }
+    }
+
+    private void checkAssignment(Consumer consumer, Partition partition) {
+        if (!consumer.getPartitions().contains(partition)) {
+            throw new IllegalArgumentException("Partition is not assigned to consumer " + consumer.getId());
         }
     }
 
@@ -197,15 +277,14 @@ public class TributarySystem {
             cluster.checkTopic(strs[1]);
             checkFileExists(strs[2]);
         }
-        List<Thread> threads = new ArrayList<>();
+        List<Callable<Void>> tasks = new ArrayList<>();
         for (String[] strs : params) {
-            Thread thread = new Thread(() -> {
+            tasks.add(() -> {
                 produceEvent(strs[0], strs[1], strs[2], null);
+                return null;
             });
-            threads.add(thread);
-            thread.start();
         }
-        joinThreads(threads);
+        runParallel(tasks);
     }
 
     public void parallelConsume(String command) {
@@ -216,15 +295,14 @@ public class TributarySystem {
             cluster.checkConsumer(strs[0]);
             cluster.checkPartition(strs[1]);
         }
-        List<Thread> threads = new ArrayList<>();
+        List<Callable<Void>> tasks = new ArrayList<>();
         for (String[] strs : params) {
-            Thread thread = new Thread(() -> {
+            tasks.add(() -> {
                 consumeEvent(strs[0], strs[1]);
+                return null;
             });
-            threads.add(thread);
-            thread.start();
         }
-        joinThreads(threads);
+        runParallel(tasks);
 
     }
 
@@ -242,13 +320,20 @@ public class TributarySystem {
         return params;
     }
 
-    private void joinThreads(List<Thread> threads) {
-        for (Thread thread : threads) {
-            try {
-                thread.join();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+    private void runParallel(List<Callable<Void>> tasks) {
+        ExecutorService executor = Executors.newFixedThreadPool(Math.min(tasks.size(), 8));
+        try {
+            List<Future<Void>> results = executor.invokeAll(tasks);
+            for (Future<Void> result : results) {
+                result.get();
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalArgumentException("Parallel operation interrupted", e);
+        } catch (ExecutionException e) {
+            throw new IllegalArgumentException("Parallel operation failed: " + e.getCause().getMessage(), e.getCause());
+        } finally {
+            executor.shutdownNow();
         }
     }
 
@@ -264,8 +349,9 @@ public class TributarySystem {
     public void playback(String consumerId, String partitionId, int offset) {
         Consumer consumer = cluster.checkConsumer(consumerId);
         Partition partition = cluster.checkPartition(partitionId);
+        checkAssignment(consumer, partition);
         List<Event> played = partition.getPlayedEvents();
-        if (offset > played.size()) {
+        if (offset < 1 || offset > played.size()) {
             throw new IllegalArgumentException("Invalid offset, max played offset is " + played.size());
         }
         for (int i = offset - 1; i < played.size(); i++) {

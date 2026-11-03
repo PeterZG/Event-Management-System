@@ -1,11 +1,14 @@
 package tributary.api;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
-import tributary.core.reblancing.RebalancingStrategy;
-import tributary.core.reblancing.RebalancingStrategyFactory;
+import tributary.core.rebalancing.RebalancingStrategy;
+import tributary.core.rebalancing.RebalancingStrategyFactory;
 
 /**
  * The ConsumerGroup class represents a collection of consumers that are
@@ -17,7 +20,7 @@ public class ConsumerGroup<T> implements InfoItem {
     /**
      * The identifier for this consumer group.
      */
-    private String id;
+    private final String id;
     /**
      * The topic that this consumer group is subscribed to.
      */
@@ -25,7 +28,7 @@ public class ConsumerGroup<T> implements InfoItem {
     /**
      * A map of consumers within this group.
      */
-    private Map<String, Consumer<T>> consumers = new LinkedHashMap<>();
+    private final Map<String, Consumer<T>> consumers = new LinkedHashMap<>();
     /**
      * The rebalancing strategy used by this group to distribute partitions among
      * consumers.
@@ -34,7 +37,7 @@ public class ConsumerGroup<T> implements InfoItem {
     /**
      * The factory used to create rebalancing strategies.
      */
-    private RebalancingStrategyFactory factory;
+    private final RebalancingStrategyFactory factory;
 
     /**
      * Constructs a new ConsumerGroup with the specified ID and rebalancing
@@ -63,8 +66,10 @@ public class ConsumerGroup<T> implements InfoItem {
      * Initiates the rebalancing process, redistributing partitions among the
      * consumers in the group.
      */
-    public void rebalancing() {
-        rebalancingStrategy.rebalancing(topic, consumers);
+    public synchronized void rebalancing() {
+        if (topic != null) {
+            rebalancingStrategy.rebalancing(topic, new LinkedHashMap<>(consumers));
+        }
     }
 
     /**
@@ -72,7 +77,11 @@ public class ConsumerGroup<T> implements InfoItem {
      *
      * @param consumer The consumer to be added.
      */
-    public void addConsumer(Consumer<T> consumer) {
+    public synchronized void addConsumer(Consumer<T> consumer) {
+        Objects.requireNonNull(consumer, "consumer");
+        if (consumers.containsKey(consumer.getId())) {
+            throw new IllegalArgumentException("Consumer already exists. id: " + consumer.getId());
+        }
         consumers.put(consumer.getId(), consumer);
         rebalancing();
     }
@@ -87,11 +96,14 @@ public class ConsumerGroup<T> implements InfoItem {
      *                                  exception occurs during instantiation.
      */
     public void createConsumer(String id, Constructor<? extends Consumer<T>> constructor) {
+        Objects.requireNonNull(constructor, "constructor");
         try {
             Consumer<T> consumer = constructor.newInstance(id);
             addConsumer(consumer);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid  constructor. ");
+        } catch (ReflectiveOperationException e) {
+            Throwable cause = e instanceof InvocationTargetException && e.getCause() != null
+                    ? e.getCause() : e;
+            throw new IllegalArgumentException("Unable to construct consumer " + id, cause);
         }
     }
 
@@ -101,8 +113,10 @@ public class ConsumerGroup<T> implements InfoItem {
      * @param id The ID of the consumer to remove.
      * @return true if the consumer was successfully removed; false otherwise.
      */
-    public boolean removeConsumer(String id) {
-        if (consumers.remove(id) != null) {
+    public synchronized boolean removeConsumer(String id) {
+        Consumer<T> removedConsumer = consumers.remove(id);
+        if (removedConsumer != null) {
+            removedConsumer.setPartitions(List.of());
             rebalancing();
             return true;
         }
@@ -115,7 +129,7 @@ public class ConsumerGroup<T> implements InfoItem {
      * @param id The ID of the consumer to retrieve.
      * @return The consumer if it exists in the group; null otherwise.
      */
-    public Consumer<T> getConsumer(String id) {
+    public synchronized Consumer<T> getConsumer(String id) {
         return consumers.get(id);
     }
 
@@ -124,7 +138,7 @@ public class ConsumerGroup<T> implements InfoItem {
      *
      * @param rebalancing The new rebalancing strategy.
      */
-    public void setRebalancing(String rebalancing) {
+    public synchronized void setRebalancing(String rebalancing) {
         this.rebalancingStrategy = factory.create(rebalancing);
         rebalancing();
     }
@@ -134,8 +148,17 @@ public class ConsumerGroup<T> implements InfoItem {
      *
      * @param topic The topic to associate with this consumer group.
      */
-    public void setTopic(Topic<T> topic) {
-        this.topic = topic;
+    public synchronized void setTopic(Topic<T> topic) {
+        this.topic = Objects.requireNonNull(topic, "topic");
+        rebalancing();
+    }
+
+    /** Clear assignments when the owning topic removes this group. */
+    synchronized void detachFromTopic(Topic<T> previousTopic) {
+        if (topic == previousTopic) {
+            topic = null;
+            consumers.values().forEach(consumer -> consumer.setPartitions(List.of()));
+        }
     }
 
     /**
@@ -145,7 +168,7 @@ public class ConsumerGroup<T> implements InfoItem {
      * @return A string with the consumer group's information
      */
     @Override
-    public String getInfo(int indent) {
+    public synchronized String getInfo(int indent) {
         String pre = " ".repeat(indent * INDENT);
         StringBuilder sb = new StringBuilder();
         sb.append(pre).append("Consumer group id: ").append(id).append(", rebalancing: ")

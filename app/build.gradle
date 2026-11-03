@@ -53,11 +53,15 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
-// Apply a specific Java toolchain to ease working on different environments.
+// Compile Java 17-compatible bytecode without forcing Gradle to provision an
+// exact JDK. This keeps the build usable with JDK 17 and newer installations.
 java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
-    }
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
 }
 
 checkstyle {
@@ -127,4 +131,8 @@ jacocoLogTestCoverage {
 
 application {
     mainClass = 'tributary.cli.TributaryCLI'
+}
+
+tasks.named('run', JavaExec) {
+    standardInput = System.in
 }

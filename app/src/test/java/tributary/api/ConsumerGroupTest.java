@@ -2,6 +2,8 @@ package tributary.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Constructor;
 
@@ -33,19 +35,37 @@ public class ConsumerGroupTest {
     }
 
     @Test
-    public void createConsumerTest() {
+    public void createConsumerTest() throws NoSuchMethodException {
+        Constructor<ConstructedConsumer> constructor = ConstructedConsumer.class.getConstructor(String.class);
+        group.createConsumer("c1", constructor);
+        assertEquals("c1", group.getConsumer("c1").getId());
+    }
 
-        Topic topic = new Topic<>("topic1");
-        ConsumerGroup group = topic.createConsumerGroup("group1", "roundrobin");
-        group.setTopic(topic);
-        Constructor<SimpleConsumer> c;
-        try {
-            c = SimpleConsumer.class.getConstructor(String.class);
-            group.createConsumer("c1", c);
-            assertEquals("c1", group.getConsumer("c1").getId());
-        } catch (Exception e) {
-            e.printStackTrace();
+    public static class ConstructedConsumer extends SimpleConsumer<String> {
+        public ConstructedConsumer(String id) {
+            super(id);
         }
+    }
+
+    public static class ThrowingConsumer extends Consumer<String> {
+        public ThrowingConsumer(String id) {
+            super(id);
+            throw new IllegalStateException("constructor failure");
+        }
+
+        @Override
+        public void consume(Event<String> event) {
+        }
+    }
+
+    @Test
+    public void reflectiveConstructionPreservesTheUnderlyingCause() throws NoSuchMethodException {
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> group.createConsumer("broken", ThrowingConsumer.class.getConstructor(String.class)));
+
+        assertEquals(IllegalStateException.class, failure.getCause().getClass());
+        assertEquals("constructor failure", failure.getCause().getMessage());
+        assertNull(group.getConsumer("broken"));
     }
 
     @Test
@@ -56,6 +76,34 @@ public class ConsumerGroupTest {
         assertEquals("c1", group.getConsumer("c1").getId());
         group.removeConsumer("c1");
         assertNull(group.getConsumer("c1"));
+    }
+
+    @Test
+    public void removingConsumerClearsItsOldAssignments() {
+        topic.createPartition("p1");
+        Consumer<String> removedConsumer = new SimpleConsumer<>("removed");
+        Consumer<String> remainingConsumer = new SimpleConsumer<>("remaining");
+        group.addConsumer(removedConsumer);
+        group.addConsumer(remainingConsumer);
+        assertEquals(1, removedConsumer.getPartitions().size());
+
+        assertTrue(group.removeConsumer("removed"));
+
+        assertTrue(removedConsumer.getPartitions().isEmpty());
+        assertEquals(1, remainingConsumer.getPartitions().size());
+    }
+
+    @Test
+    public void removingGroupClearsAssignmentsAndPreventsAutomaticReattachment() {
+        topic.createPartition("p1");
+        Consumer<String> consumer = new SimpleConsumer<>("c1");
+        group.addConsumer(consumer);
+
+        assertTrue(topic.removeConsumerGroup("group1"));
+        assertTrue(consumer.getPartitions().isEmpty());
+        group.rebalancing();
+        topic.createPartition("p2");
+        assertTrue(consumer.getPartitions().isEmpty());
     }
 
     @Test

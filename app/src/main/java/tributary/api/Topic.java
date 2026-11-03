@@ -1,6 +1,6 @@
 package tributary.api;
 
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -14,15 +14,15 @@ public class Topic<T> implements InfoItem {
     /**
      * The identifier for this topic.
      */
-    private String id;
+    private final String id;
     /**
      * A map of consumer groups associated with this topic
      */
-    private Map<String, ConsumerGroup<T>> groups = new HashMap<>();
+    private final Map<String, ConsumerGroup<T>> groups = new LinkedHashMap<>();
     /**
      * A map of partitions of topic
      */
-    private Map<String, Partition<T>> partitions = new LinkedHashMap<>();
+    private final Map<String, Partition<T>> partitions = new LinkedHashMap<>();
 
     /**
      * Constructs a new Topic with the specified ID.
@@ -38,8 +38,8 @@ public class Topic<T> implements InfoItem {
      *
      * @return map of the partitions in this topic.
      */
-    public Map<String, Partition<T>> getPartitions() {
-        return partitions;
+    public synchronized Map<String, Partition<T>> getPartitions() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(partitions));
     }
 
     /**
@@ -59,10 +59,27 @@ public class Topic<T> implements InfoItem {
      *                                  exists.
      */
     public void createPartition(String id) {
-        if (partitions.get(id) != null) {
-            throw new IllegalArgumentException("Partition already exists. id: " + id);
+        Map<String, ConsumerGroup<T>> groupsSnapshot;
+        synchronized (this) {
+            if (partitions.containsKey(id)) {
+                throw new IllegalArgumentException("Partition already exists. id: " + id);
+            }
+            partitions.put(id, new Partition<>(id));
+            groupsSnapshot = new LinkedHashMap<>(groups);
         }
-        partitions.put(id, new Partition<>(id));
+        groupsSnapshot.values().forEach(ConsumerGroup::rebalancing);
+    }
+
+    public boolean removePartition(String id) {
+        Map<String, ConsumerGroup<T>> groupsSnapshot;
+        synchronized (this) {
+            if (partitions.remove(id) == null) {
+                return false;
+            }
+            groupsSnapshot = new LinkedHashMap<>(groups);
+        }
+        groupsSnapshot.values().forEach(ConsumerGroup::rebalancing);
+        return true;
     }
 
     /**
@@ -75,11 +92,12 @@ public class Topic<T> implements InfoItem {
      * @throws IllegalArgumentException If a consumer group with the same ID already
      *                                  exists.
      */
-    public ConsumerGroup<T> createConsumerGroup(String id, String rebalancing) {
-        if (groups.get(id) != null) {
+    public synchronized ConsumerGroup<T> createConsumerGroup(String id, String rebalancing) {
+        if (groups.containsKey(id)) {
             throw new IllegalArgumentException("ConsumerGroup already exists. id: " + id);
         }
         ConsumerGroup<T> group = new ConsumerGroup<>(id, rebalancing);
+        group.setTopic(this);
         groups.put(id, group);
         return group;
     }
@@ -90,8 +108,22 @@ public class Topic<T> implements InfoItem {
      * @param id The ID of the partition to retrieve.
      * @return The partition if it exists, or null if no such partition exists.
      */
-    public Partition<T> getPartition(String id) {
+    public synchronized Partition<T> getPartition(String id) {
         return partitions.get(id);
+    }
+
+    public boolean removeConsumerGroup(String id) {
+        ConsumerGroup<T> removedGroup;
+        synchronized (this) {
+            removedGroup = groups.remove(id);
+        }
+        if (removedGroup == null) {
+            return false;
+        }
+        // Rebalancing acquires a group lock before reading its topic. Do not
+        // acquire the same locks in the opposite order while detaching a group.
+        removedGroup.detachFromTopic(this);
+        return true;
     }
 
     /**
@@ -102,7 +134,7 @@ public class Topic<T> implements InfoItem {
      * @return A string with the topic's information, formatted with indentation.
      */
     @Override
-    public String getInfo(int indent) {
+    public synchronized String getInfo(int indent) {
         String pre = " ".repeat(indent * INDENT);
         StringBuilder sb = new StringBuilder();
         sb.append(pre).append("Topic id: ").append(id).append("\n");

@@ -1,8 +1,9 @@
 package tributary.api;
 
-import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Queue;
 
 /**
@@ -21,11 +22,11 @@ public class Partition<T> implements InfoItem {
     /**
      * A queue that holds the events to be processed.
      */
-    private Queue<Event<T>> queue = new LinkedList<>();
+    private final Queue<Event<T>> queue = new ArrayDeque<>();
     /**
      * A list that keeps track of events that have been "played".
      */
-    private List<Event<T>> played = new LinkedList<>();
+    private final List<Event<T>> played = new ArrayList<>();
 
     /**
      * Constructs a new Partition with the specified ID.
@@ -42,7 +43,7 @@ public class Partition<T> implements InfoItem {
      * @param event The event to be added to the partition.
      */
     public synchronized void pushEvent(Event<T> event) {
-        queue.add(event);
+        queue.add(Objects.requireNonNull(event, "event"));
     }
 
     /**
@@ -52,7 +53,9 @@ public class Partition<T> implements InfoItem {
      */
     public synchronized Event<T> popEvent() {
         Event<T> event = queue.poll();
-        played.add(event);
+        if (event != null) {
+            played.add(event);
+        }
         return event;
     }
 
@@ -70,7 +73,7 @@ public class Partition<T> implements InfoItem {
      *
      * @return The size of the queue.
      */
-    public int size() {
+    public synchronized int size() {
         return queue.size();
     }
 
@@ -83,13 +86,11 @@ public class Partition<T> implements InfoItem {
      *         indentation.
      */
     @Override
-    public String getInfo(int indent) {
+    public synchronized String getInfo(int indent) {
         String pre = " ".repeat(indent * INDENT);
         StringBuilder sb = new StringBuilder();
         sb.append(pre).append("Partition id: ").append(id).append("\n");
-        Iterator<Event<T>> iterator = queue.iterator();
-        while (iterator.hasNext()) {
-            Event<T> next = iterator.next();
+        for (Event<T> next : queue) {
             sb.append(next.getInfo(indent + 1));
         }
         return sb.toString();
@@ -100,7 +101,7 @@ public class Partition<T> implements InfoItem {
      *
      * @return A list of played events.
      */
-    public List<Event<T>> getPlayedEvents() {
-        return played;
+    public synchronized List<Event<T>> getPlayedEvents() {
+        return List.copyOf(played);
     }
 }

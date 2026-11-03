@@ -1,4 +1,4 @@
-package tributary.core.reblancing;
+package tributary.core.rebalancing;
 
 import java.util.Map;
 
